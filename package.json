@@ -1,0 +1,23 @@
+{
+    "name": "portkey-benchmark",
+    "version": "1.0.0",
+    "description": "Benchmark script to measure Portkey latency overhead",
+    "main": "benchmark.js",
+    "type": "module",
+    "scripts": {
+        "start": "node benchmark.js"
+    },
+    "dependencies": {
+        "fs": "^0.0.1-security",
+        "openai": "^4.0.0"
+    },
+    "keywords": [
+        "portkey",
+        "openai",
+        "benchmark",
+        "latency"
+    ],
+    "author": "",
+    "license": "MIT",
+    "devDependencies": {}
+}
