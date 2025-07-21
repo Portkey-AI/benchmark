@@ -15,8 +15,8 @@
             "content": "Explain machine learning in simple terms."
         }
     ],
-    "concurrency": 5,
-    "maxRequests": 10,
+    "concurrency": 15,
+    "maxRequests": 500,
     "testDuration": 60,
     "maxTokens": 150,
     "temperature": 0.7
