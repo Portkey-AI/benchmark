@@ -29,9 +29,14 @@ This benchmark tool:
    Edit `config.json` and replace the placeholder values:
    ```json
    {
-     "portkeyApiKey": "pk-your-actual-portkey-api-key",
-     "openaiApiKey": "sk-your-actual-openai-api-key"
+     "portkeyApiKey": "your-actual-portkey-api-key",
+     "portkeyProviderSlug": "your-provider-slug-from-model-catalog",
+     "openaiApiKey": "sk-your-actual-openai-api-key",
    }
+   ```
+   ```
+   If you have a default config attached with the Portkey API key, which has a virtual key inside, you can skip the Portkey provider slug.
+   Provider slug should be prefixed be `@`.
    ```
 
 3. **Run the benchmark:**
@@ -128,7 +133,7 @@ Test Duration: 2023-12-01T10:30:00.000Z
 ├─────────────────────┼──────────────┼──────────────┼─────────────┤
 │ Avg Total Time      │ 1247.20ms    │ 1267.30ms    │ +20.10ms    │
 │ Avg Network Latency │ 182.50ms     │ 202.40ms     │ +19.90ms    │
-│ Success Rate        │ 99.8%        │ 99.6%        │ -0.2%       │
+│ Success Rate        │ 100%         │ 100%%        │ -           │
 │ Median Time         │ 1198.00ms    │ 1219.00ms    │ +21.00ms    │
 │ P95 Time            │ 1785.00ms    │ 1809.00ms    │ +24.00ms    │
 │ P99 Time            │ 2087.00ms    │ 2115.00ms    │ +28.00ms    │

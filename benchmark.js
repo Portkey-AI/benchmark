@@ -19,7 +19,8 @@ class PortkeyBenchmark {
       apiKey: "dummy",
       baseURL: config.portkeyBaseURL || 'https://api.portkey.ai/v1',
       defaultHeaders: {
-        'x-portkey-api-key': config.portkeyApiKey || undefined
+        'x-portkey-api-key': config.portkeyApiKey || undefined,
+        ...(config.portkeyProviderSlug && { 'x-portkey-provider': config.portkeyProviderSlug })
       }
     });
   }
@@ -239,11 +240,11 @@ class PortkeyBenchmark {
     }
     
     if (!openaiSuccess) {
-      console.log('⚠️  OpenAI test failed, but Portkey test passed. Continuing with Portkey-only testing...');
+      throw new Error('⚠️  OpenAI test failed, but Portkey test passed. Aborting test...');
     }
     
     if (!portkeySuccess) {
-      console.log('⚠️  Portkey test failed, but OpenAI test passed. Continuing with OpenAI-only testing...');
+      throw new Error('⚠️  Portkey test failed, but OpenAI test passed. Aborting test...');
     }
     
     // Check if processing times are available for both enabled providers

@@ -2,6 +2,7 @@
     "portkeyBaseURL": "https://api.portkey.ai/v1",
     "portkeyApiKey": "YOUR_PORTKEY_API_KEY",
     "portkeyConfigId": "YOUR_PORTKEY_CONFIG_ID(OPTIONAL)",
+    "portkeyProviderSlug": "YOUR_PORTKEY_PROVIDER_SLUG(OPTIONAL)",
     "openaiApiKey": "YOUR_OPENAI_API_KEY",
     "model": "gpt-3.5-turbo",
     "prompt": [
