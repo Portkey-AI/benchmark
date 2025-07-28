@@ -9,20 +9,46 @@ class PortkeyBenchmark {
       portkey: []
     };
     
-    // Initialize OpenAI client for direct calls
-    this.openaiClient = new OpenAI({
-      apiKey: config.openaiApiKey
-    });
+    // Determine which providers to enable based on mode
+    this.determineProvidersFromMode();
     
-    // Initialize Portkey client
-    this.portkeyClient = new OpenAI({
-      apiKey: "dummy",
-      baseURL: config.portkeyBaseURL || 'https://api.portkey.ai/v1',
-      defaultHeaders: {
-        'x-portkey-api-key': config.portkeyApiKey || undefined,
-        ...(config.portkeyProviderSlug && { 'x-portkey-provider': config.portkeyProviderSlug })
-      }
-    });
+    // Initialize OpenAI client for direct calls (only if needed)
+    if (this.shouldTestOpenAI) {
+      this.openaiClient = new OpenAI({
+        apiKey: config.openaiApiKey,
+        timeout: 60000 // 60 second timeout
+      });
+    }
+    
+    // Initialize Portkey client (only if needed)
+    if (this.shouldTestPortkey) {
+      this.portkeyClient = new OpenAI({
+        apiKey: "dummy",
+        baseURL: config.portkeyBaseURL || 'https://api.portkey.ai/v1',
+        defaultHeaders: {
+          'x-portkey-api-key': config.portkeyApiKey || undefined,
+          ...(config.portkeyProviderSlug && { 'x-portkey-provider': config.portkeyProviderSlug })
+        },
+        timeout: 60000 // 60 second timeout
+      });
+    }
+  }
+
+  determineProvidersFromMode() {
+    const mode = this.config.mode || 'comparison';
+    
+    switch (mode) {
+      case 'comparison':
+        this.shouldTestOpenAI = true;
+        this.shouldTestPortkey = true;
+        break;
+      case 'loadtest':
+        this.shouldTestOpenAI = false;
+        this.shouldTestPortkey = true;
+        break;
+      default:
+        throw new Error(`Invalid mode: ${mode}. Supported modes: comparison, loadtest`);
+    }
   }
 
   async makeRequest(client, prompt, provider) {
@@ -77,6 +103,16 @@ class PortkeyBenchmark {
       const endTime = Date.now();
       const totalTime = endTime - startTime;
       
+      // Log specific error types for debugging
+      let errorType = 'unknown';
+      if (error.message.includes('rate limit') || error.message.includes('429')) {
+        errorType = 'rate_limit';
+      } else if (error.message.includes('timeout') || error.message.includes('ECONNRESET')) {
+        errorType = 'timeout';
+      } else if (error.message.includes('ECONNREFUSED')) {
+        errorType = 'connection_refused';
+      }
+      
       return {
         provider,
         totalTime,
@@ -85,6 +121,7 @@ class PortkeyBenchmark {
         timestamp: new Date().toISOString(),
         success: false,
         error: error.message,
+        errorType,
         tokensUsed: 0,
         promptTokens: 0,
         completionTokens: 0
@@ -159,6 +196,7 @@ class PortkeyBenchmark {
 
   async runPreflightTest() {
     console.log('🧪 Running preflight test...');
+    console.log(`Mode: ${this.config.mode || 'comparison'}`);
     
     const testPrompt = typeof this.config.prompt === 'string' 
       ? this.config.prompt.substring(0, 100) + (this.config.prompt.length > 100 ? '...' : '')
@@ -169,122 +207,157 @@ class PortkeyBenchmark {
       portkey: null
     };
     
-    // Test OpenAI
-    console.log('📡 Testing OpenAI connection...');
-    try {
-      const openaiResult = await this.makeRequest(this.openaiClient, testPrompt, 'openai');
-      if (openaiResult.success) {
-        console.log(`✅ OpenAI test successful (${openaiResult.totalTime}ms)`);
-        
-        // Check if we can extract OpenAI processing time
-        if (openaiResult.openaiProcessingTime !== null) {
-          console.log(`✅ OpenAI processing time extracted: ${openaiResult.openaiProcessingTime}ms`);
+    // Test OpenAI (only if enabled for this mode)
+    if (this.shouldTestOpenAI) {
+      console.log('📡 Testing OpenAI connection...');
+      try {
+        const openaiResult = await this.makeRequest(this.openaiClient, testPrompt, 'openai');
+        if (openaiResult.success) {
+          console.log(`✅ OpenAI test successful (${openaiResult.totalTime}ms)`);
+          
+          // Check if we can extract OpenAI processing time
+          if (openaiResult.openaiProcessingTime !== null) {
+            console.log(`✅ OpenAI processing time extracted: ${openaiResult.openaiProcessingTime}ms`);
+          } else {
+            console.log(`⚠️  OpenAI processing time not available in response headers`);
+            console.log(`   Network latency calculation will be limited`);
+          }
+          
+          testResults.openai = openaiResult;
         } else {
-          console.log(`⚠️  OpenAI processing time not available in response headers`);
-          console.log(`   Network latency calculation will be limited`);
+          console.log(`❌ OpenAI test failed: ${openaiResult.error}`);
+          testResults.openai = openaiResult;
         }
-        
-        testResults.openai = openaiResult;
-      } else {
-        console.log(`❌ OpenAI test failed: ${openaiResult.error}`);
-        testResults.openai = openaiResult;
+      } catch (error) {
+        console.log(`❌ OpenAI test failed with exception:`);
+        console.log(`Error: ${error.message}`);
+        if (error.response) {
+          console.log(`Status: ${error.response.status}`);
+          console.log(`Response: ${JSON.stringify(error.response.data, null, 2)}`);
+        }
+        console.log(`Stack: ${error.stack}`);
+        testResults.openai = { success: false, error: error.message, fullError: error };
       }
-    } catch (error) {
-      console.log(`❌ OpenAI test failed with exception:`);
-      console.log(`Error: ${error.message}`);
-      if (error.response) {
-        console.log(`Status: ${error.response.status}`);
-        console.log(`Response: ${JSON.stringify(error.response.data, null, 2)}`);
-      }
-      console.log(`Stack: ${error.stack}`);
-      testResults.openai = { success: false, error: error.message, fullError: error };
+    } else {
+      console.log('⏭️  Skipping OpenAI test (not enabled for this mode)');
     }
     
-    // Test Portkey
-    console.log('📡 Testing Portkey connection...');
-    try {
-      const portkeyResult = await this.makeRequest(this.portkeyClient, testPrompt, 'portkey');
-      if (portkeyResult.success) {
-        console.log(`✅ Portkey test successful (${portkeyResult.totalTime}ms)`);
-        
-        // Check if we can extract OpenAI processing time from Portkey response
-        if (portkeyResult.openaiProcessingTime !== null) {
-          console.log(`✅ OpenAI processing time extracted via Portkey: ${portkeyResult.openaiProcessingTime}ms`);
+    // Test Portkey (only if enabled for this mode)
+    if (this.shouldTestPortkey) {
+      console.log('📡 Testing Portkey connection...');
+      try {
+        const portkeyResult = await this.makeRequest(this.portkeyClient, testPrompt, 'portkey');
+        if (portkeyResult.success) {
+          console.log(`✅ Portkey test successful (${portkeyResult.totalTime}ms)`);
+          
+          // Check if we can extract OpenAI processing time from Portkey response
+          if (portkeyResult.openaiProcessingTime !== null) {
+            console.log(`✅ OpenAI processing time extracted via Portkey: ${portkeyResult.openaiProcessingTime}ms`);
+          } else {
+            console.log(`⚠️  OpenAI processing time not available in Portkey response headers`);
+            console.log(`   Network latency calculation will be limited`);
+          }
+          
+          testResults.portkey = portkeyResult;
         } else {
-          console.log(`⚠️  OpenAI processing time not available in Portkey response headers`);
-          console.log(`   Network latency calculation will be limited`);
+          console.log(`❌ Portkey test failed: ${portkeyResult.error}`);
+          testResults.portkey = portkeyResult;
         }
-        
-        testResults.portkey = portkeyResult;
-      } else {
-        console.log(`❌ Portkey test failed: ${portkeyResult.error}`);
-        testResults.portkey = portkeyResult;
+      } catch (error) {
+        console.log(`❌ Portkey test failed with exception:`);
+        console.log(`Error: ${error.message}`);
+        if (error.response) {
+          console.log(`Status: ${error.response.status}`);
+          console.log(`Response: ${JSON.stringify(error.response.data, null, 2)}`);
+        }
+        console.log(`Stack: ${error.stack}`);
+        testResults.portkey = { success: false, error: error.message, fullError: error };
       }
-    } catch (error) {
-      console.log(`❌ Portkey test failed with exception:`);
-      console.log(`Error: ${error.message}`);
-      if (error.response) {
-        console.log(`Status: ${error.response.status}`);
-        console.log(`Response: ${JSON.stringify(error.response.data, null, 2)}`);
-      }
-      console.log(`Stack: ${error.stack}`);
-      testResults.portkey = { success: false, error: error.message, fullError: error };
+    } else {
+      console.log('⏭️  Skipping Portkey test (not enabled for this mode)');
     }
     
-    // Evaluate results
+    // Evaluate results based on mode
     const openaiSuccess = testResults.openai && testResults.openai.success;
     const portkeySuccess = testResults.portkey && testResults.portkey.success;
     
-    if (!openaiSuccess && !portkeySuccess) {
-      throw new Error('Both OpenAI and Portkey preflight tests failed. Please check your configuration and API keys.');
+    // Check if any enabled provider failed
+    const enabledProviders = [];
+    const failedProviders = [];
+    
+    if (this.shouldTestOpenAI) {
+      enabledProviders.push('OpenAI');
+      if (!openaiSuccess) failedProviders.push('OpenAI');
     }
     
-    if (!openaiSuccess) {
-      throw new Error('⚠️  OpenAI test failed, but Portkey test passed. Aborting test...');
+    if (this.shouldTestPortkey) {
+      enabledProviders.push('Portkey');
+      if (!portkeySuccess) failedProviders.push('Portkey');
     }
     
-    if (!portkeySuccess) {
-      throw new Error('⚠️  Portkey test failed, but OpenAI test passed. Aborting test...');
+    if (failedProviders.length === enabledProviders.length) {
+      throw new Error(`All enabled providers failed (${failedProviders.join(', ')}). Please check your configuration and API keys.`);
     }
     
-    // Check if processing times are available for both enabled providers
-    const openaiHasProcessingTime = openaiSuccess && testResults.openai.openaiProcessingTime !== null;
-    const portkeyHasProcessingTime = portkeySuccess && testResults.portkey.openaiProcessingTime !== null;
+    if (failedProviders.length > 0) {
+      throw new Error(`Some providers failed: ${failedProviders.join(', ')}. Aborting test...`);
+    }
     
-    if (openaiSuccess && portkeySuccess) {
-      // Both providers are enabled, both must have processing times
-      if (!openaiHasProcessingTime || !portkeyHasProcessingTime) {
-        const missingProviders = [];
-        if (!openaiHasProcessingTime) missingProviders.push('OpenAI');
-        if (!portkeyHasProcessingTime) missingProviders.push('Portkey');
-        
-        throw new Error(`Processing time extraction failed for ${missingProviders.join(' and ')}. ` +
-          'Both providers must return processing time headers for accurate latency comparison. ' +
-          'Please check if the APIs are returning the expected headers.');
+    // Check if processing times are available for enabled providers (only important for comparison mode)
+    const mode = this.config.mode || 'comparison';
+    if (mode === 'comparison') {
+      const openaiHasProcessingTime = openaiSuccess && testResults.openai.openaiProcessingTime !== null;
+      const portkeyHasProcessingTime = portkeySuccess && testResults.portkey.openaiProcessingTime !== null;
+      
+      if (this.shouldTestOpenAI && this.shouldTestPortkey) {
+        // Both providers are enabled, both must have processing times for accurate comparison
+        if (!openaiHasProcessingTime || !portkeyHasProcessingTime) {
+          const missingProviders = [];
+          if (!openaiHasProcessingTime) missingProviders.push('OpenAI');
+          if (!portkeyHasProcessingTime) missingProviders.push('Portkey');
+          
+          console.log(`⚠️  Processing time extraction failed for ${missingProviders.join(' and ')}. ` +
+            'Comparison mode will be less accurate without processing time headers.');
+        }
       }
-    } else if (openaiSuccess && !openaiHasProcessingTime) {
-      throw new Error('OpenAI processing time extraction failed. Cannot proceed with accurate latency measurement.');
-    } else if (portkeySuccess && !portkeyHasProcessingTime) {
-      throw new Error('Portkey processing time extraction failed. Cannot proceed with accurate latency measurement.');
+    } else {
+      // For load testing modes, processing time is helpful but not critical
+      const enabledProvider = this.shouldTestOpenAI ? 'OpenAI' : 'Portkey';
+      const hasProcessingTime = this.shouldTestOpenAI ? 
+        (openaiSuccess && testResults.openai.openaiProcessingTime !== null) :
+        (portkeySuccess && testResults.portkey.openaiProcessingTime !== null);
+      
+      if (!hasProcessingTime) {
+        console.log(`⚠️  Processing time extraction failed for ${enabledProvider}. ` +
+          'Network latency calculations will be limited.');
+      }
     }
     
     console.log('✅ Preflight test completed successfully!\n');
     
     return {
-      openaiEnabled: openaiSuccess,
-      portkeyEnabled: portkeySuccess,
+      openaiEnabled: this.shouldTestOpenAI && openaiSuccess,
+      portkeyEnabled: this.shouldTestPortkey && portkeySuccess,
       testResults
     };
   }
 
   async runBenchmark() {
-    console.log('🚀 Starting Portkey Latency Benchmark');
+    const mode = this.config.mode || 'comparison';
+    const modeDisplayNames = {
+      'comparison': 'Portkey Latency Comparison',
+      'loadtest': 'Portkey Load Test'
+    };
+    
+    console.log(`🚀 Starting ${modeDisplayNames[mode] || 'Benchmark'}`);
     console.log(`Configuration:
+    - Mode: ${mode}
     - Model: ${this.config.model || 'gpt-3.5-turbo'}
     - Concurrency: ${this.config.concurrency}
     - Max Requests: ${this.config.maxRequests}
     - Test Duration: ${this.config.testDuration}s
     - Prompt: ${typeof this.config.prompt === 'string' ? `"${this.config.prompt.substring(0, 50)}..."` : `${this.config.prompt.length} message(s)`}
+    - Providers: ${[this.shouldTestOpenAI && 'OpenAI', this.shouldTestPortkey && 'Portkey'].filter(Boolean).join(', ')}
     `);
 
     // Run preflight test first
@@ -443,14 +516,19 @@ class PortkeyBenchmark {
         
         if (this.portkeyEnabled) {
           const successfulPortkey = this.results.portkey.filter(r => r.success).length;
+          const failedPortkey = this.results.portkey.filter(r => !r.success).length;
           progressMessage += ` | Portkey: ${successfulPortkey}/${this.results.portkey.length} success`;
+          if (failedPortkey > 0) {
+            progressMessage += ` (${failedPortkey} failed)`;
+          }
         }
         
         console.log(progressMessage);
       }
       
-      // Add small delay to prevent overwhelming the APIs
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Add delay to prevent overwhelming the APIs (larger delay for high concurrency)
+      const delay = this.config.concurrency > 50 ? 500 : 100;
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
     
     console.log(`🏁 Worker ${workerId + 1} finished`);
@@ -525,20 +603,27 @@ class PortkeyBenchmark {
     const openaiStats = this.calculateStats(this.results.openai);
     const portkeyStats = this.calculateStats(this.results.portkey);
     
+    const summary = {
+      totalRequests: Math.max(this.results.openai.length, this.results.portkey.length),
+      openaiStats,
+      portkeyStats
+    };
+    
+    // Only add comparison if both providers were tested
+    const mode = this.config.mode || 'comparison';
+    if (mode === 'comparison' && this.results.openai.length > 0 && this.results.portkey.length > 0) {
+      summary.comparison = {
+        latencyOverhead: portkeyStats.avgTotalTime - openaiStats.avgTotalTime,
+        latencyOverheadPercentage: ((portkeyStats.avgTotalTime - openaiStats.avgTotalTime) / openaiStats.avgTotalTime) * 100,
+        networkLatencyDiff: portkeyStats.avgNetworkLatency - openaiStats.avgNetworkLatency,
+        successRateDiff: portkeyStats.successRate - openaiStats.successRate
+      };
+    }
+    
     const report = {
       timestamp: new Date().toISOString(),
       config: this.config,
-      summary: {
-        totalRequests: Math.max(this.results.openai.length, this.results.portkey.length),
-        openaiStats,
-        portkeyStats,
-        comparison: {
-          latencyOverhead: portkeyStats.avgTotalTime - openaiStats.avgTotalTime,
-          latencyOverheadPercentage: ((portkeyStats.avgTotalTime - openaiStats.avgTotalTime) / openaiStats.avgTotalTime) * 100,
-          networkLatencyDiff: portkeyStats.avgNetworkLatency - openaiStats.avgNetworkLatency,
-          successRateDiff: portkeyStats.successRate - openaiStats.successRate
-        }
-      },
+      summary,
       rawResults: {
         openai: this.results.openai,
         portkey: this.results.portkey
@@ -551,34 +636,77 @@ class PortkeyBenchmark {
 
   printReport(report) {
     const { openaiStats, portkeyStats, comparison } = report.summary;
+    const mode = this.config.mode || 'comparison';
     
     console.log('\n' + '='.repeat(60));
-    console.log('📊 PORTKEY LATENCY BENCHMARK REPORT');
+    
+    if (mode === 'comparison') {
+      console.log('📊 PORTKEY LATENCY BENCHMARK REPORT');
+    } else if (mode === 'loadtest') {
+      console.log('📊 PORTKEY LOAD TEST REPORT');
+    }
+    
     console.log('='.repeat(60));
     
     console.log('\n🔍 TEST SUMMARY:');
-    console.log(`Total Request Pairs: ${report.summary.totalRequests}`);
+    console.log(`Mode: ${mode}`);
+    console.log(`Total Requests: ${report.summary.totalRequests}`);
     console.log(`Test Duration: ${new Date(report.timestamp).toLocaleString()}`);
     
-    console.log('\n📈 PERFORMANCE COMPARISON:');
-    console.log('┌─────────────────────┬──────────────┬──────────────┬─────────────┐');
-    console.log('│ Metric              │ OpenAI       │ Portkey      │ Difference  │');
-    console.log('├─────────────────────┼──────────────┼──────────────┼─────────────┤');
-    console.log(`│ Avg Total Time      │ ${openaiStats.avgTotalTime.toFixed(2)}ms      │ ${portkeyStats.avgTotalTime.toFixed(2)}ms      │ +${comparison.latencyOverhead.toFixed(2)}ms     │`);
-    console.log(`│ Avg Network Latency │ ${openaiStats.avgNetworkLatency.toFixed(2)}ms      │ ${portkeyStats.avgNetworkLatency.toFixed(2)}ms      │ +${comparison.networkLatencyDiff.toFixed(2)}ms     │`);
-    console.log(`│ Success Rate        │ ${openaiStats.successRate.toFixed(1)}%       │ ${portkeyStats.successRate.toFixed(1)}%       │ ${comparison.successRateDiff.toFixed(1)}%       │`);
-    console.log(`│ Median Time         │ ${openaiStats.medianTotalTime.toFixed(2)}ms      │ ${portkeyStats.medianTotalTime.toFixed(2)}ms      │ +${(portkeyStats.medianTotalTime - openaiStats.medianTotalTime).toFixed(2)}ms     │`);
-    console.log(`│ P95 Time            │ ${openaiStats.p95TotalTime.toFixed(2)}ms      │ ${portkeyStats.p95TotalTime.toFixed(2)}ms      │ +${(portkeyStats.p95TotalTime - openaiStats.p95TotalTime).toFixed(2)}ms     │`);
-    console.log(`│ P99 Time            │ ${openaiStats.p99TotalTime.toFixed(2)}ms      │ ${portkeyStats.p99TotalTime.toFixed(2)}ms      │ +${(portkeyStats.p99TotalTime - openaiStats.p99TotalTime).toFixed(2)}ms     │`);
-    console.log('└─────────────────────┴──────────────┴──────────────┴─────────────┘');
-    
-    console.log('\n🎯 KEY INSIGHTS:');
-    console.log(`• Portkey adds an average of ${comparison.latencyOverhead.toFixed(2)}ms latency (${comparison.latencyOverheadPercentage.toFixed(1)}% increase)`);
-    console.log(`• Network latency difference: ${comparison.networkLatencyDiff.toFixed(2)}ms`);
-    console.log(`• Success rate difference: ${comparison.successRateDiff.toFixed(1)}%`);
-    
-    if (comparison.latencyOverhead > 0) {
-      console.log(`• Portkey proxy overhead: ${comparison.latencyOverhead.toFixed(2)}ms per request`);
+    if (mode === 'comparison') {
+      // Comparison mode - show side-by-side comparison
+      console.log('\n📈 PERFORMANCE COMPARISON:');
+      console.log('┌─────────────────────┬──────────────┬──────────────┬─────────────┐');
+      console.log('│ Metric              │ OpenAI       │ Portkey      │ Difference  │');
+      console.log('├─────────────────────┼──────────────┼──────────────┼─────────────┤');
+      console.log(`│ Avg Total Time      │ ${openaiStats.avgTotalTime.toFixed(2)}ms      │ ${portkeyStats.avgTotalTime.toFixed(2)}ms      │ +${comparison.latencyOverhead.toFixed(2)}ms     │`);
+      console.log(`│ Avg Network Latency │ ${openaiStats.avgNetworkLatency.toFixed(2)}ms      │ ${portkeyStats.avgNetworkLatency.toFixed(2)}ms      │ +${comparison.networkLatencyDiff.toFixed(2)}ms     │`);
+      console.log(`│ Success Rate        │ ${openaiStats.successRate.toFixed(1)}%       │ ${portkeyStats.successRate.toFixed(1)}%       │ ${comparison.successRateDiff.toFixed(1)}%       │`);
+      console.log(`│ Median Time         │ ${openaiStats.medianTotalTime.toFixed(2)}ms      │ ${portkeyStats.medianTotalTime.toFixed(2)}ms      │ +${(portkeyStats.medianTotalTime - openaiStats.medianTotalTime).toFixed(2)}ms     │`);
+      console.log(`│ P95 Time            │ ${openaiStats.p95TotalTime.toFixed(2)}ms      │ ${portkeyStats.p95TotalTime.toFixed(2)}ms      │ +${(portkeyStats.p95TotalTime - openaiStats.p95TotalTime).toFixed(2)}ms     │`);
+      console.log(`│ P99 Time            │ ${openaiStats.p99TotalTime.toFixed(2)}ms      │ ${portkeyStats.p99TotalTime.toFixed(2)}ms      │ +${(portkeyStats.p99TotalTime - openaiStats.p99TotalTime).toFixed(2)}ms     │`);
+      console.log('└─────────────────────┴──────────────┴──────────────┴─────────────┘');
+      
+      console.log('\n🎯 KEY INSIGHTS:');
+      console.log(`• Portkey adds an average of ${comparison.latencyOverhead.toFixed(2)}ms latency (${comparison.latencyOverheadPercentage.toFixed(1)}% increase)`);
+      console.log(`• Network latency difference: ${comparison.networkLatencyDiff.toFixed(2)}ms`);
+      console.log(`• Success rate difference: ${comparison.successRateDiff.toFixed(1)}%`);
+      
+      if (comparison.latencyOverhead > 0) {
+        console.log(`• Portkey proxy overhead: ${comparison.latencyOverhead.toFixed(2)}ms per request`);
+      }
+    } else {
+      // Load test mode - show detailed Portkey stats
+      const stats = portkeyStats;
+      const providerName = 'Portkey';
+      
+      console.log(`\n📈 ${providerName.toUpperCase()} PERFORMANCE METRICS:`);
+      console.log('┌─────────────────────┬──────────────┐');
+      console.log('│ Metric              │ Value        │');
+      console.log('├─────────────────────┼──────────────┤');
+      console.log(`│ Total Requests      │ ${stats.count}           │`);
+      console.log(`│ Successful          │ ${stats.successfulCount}           │`);
+      console.log(`│ Failed              │ ${stats.failedCount}           │`);
+      console.log(`│ Success Rate        │ ${stats.successRate.toFixed(1)}%       │`);
+      console.log(`│ Avg Total Time      │ ${stats.avgTotalTime.toFixed(2)}ms      │`);
+      console.log(`│ Avg Network Latency │ ${stats.avgNetworkLatency.toFixed(2)}ms      │`);
+      console.log(`│ Median Time         │ ${stats.medianTotalTime.toFixed(2)}ms      │`);
+      console.log(`│ P95 Time            │ ${stats.p95TotalTime.toFixed(2)}ms      │`);
+      console.log(`│ P99 Time            │ ${stats.p99TotalTime.toFixed(2)}ms      │`);
+      console.log(`│ Min Time            │ ${stats.minTotalTime.toFixed(2)}ms      │`);
+      console.log(`│ Max Time            │ ${stats.maxTotalTime.toFixed(2)}ms      │`);
+      console.log(`│ Avg Tokens/Request  │ ${stats.avgTokensPerRequest.toFixed(1)}        │`);
+      console.log('└─────────────────────┴──────────────┘');
+      
+      console.log('\n🎯 KEY INSIGHTS:');
+      console.log(`• Average response time: ${stats.avgTotalTime.toFixed(2)}ms`);
+      console.log(`• Success rate: ${stats.successRate.toFixed(1)}%`);
+      console.log(`• 95% of requests completed in: ${stats.p95TotalTime.toFixed(2)}ms or less`);
+      console.log(`• Average tokens per request: ${stats.avgTokensPerRequest.toFixed(1)}`);
+      
+      if (stats.avgNetworkLatency > 0) {
+        console.log(`• Average network latency: ${stats.avgNetworkLatency.toFixed(2)}ms`);
+      }
     }
     
     console.log('\n💾 Detailed results saved to: benchmark_results.json');
@@ -603,14 +731,31 @@ async function main() {
     
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     
-    // Validate required fields
-    if (!config.portkeyApiKey && !config.openaiApiKey) {
-      throw new Error('At least one API key (portkeyApiKey or openaiApiKey) must be provided in config');
-    }
+    // Validate required fields based on mode
+    const mode = config.mode || 'comparison';
     
     if (!config.prompt) {
       throw new Error('Missing prompt in config');
     }
+    
+         // Mode-specific validation
+     switch (mode) {
+       case 'comparison':
+         if (!config.portkeyApiKey) {
+           throw new Error('portkeyApiKey is required for comparison mode');
+         }
+         if (!config.openaiApiKey) {
+           throw new Error('openaiApiKey is required for comparison mode');
+         }
+         break;
+       case 'loadtest':
+         if (!config.portkeyApiKey) {
+           throw new Error('portkeyApiKey is required for loadtest mode');
+         }
+         break;
+       default:
+         throw new Error(`Invalid mode: ${mode}. Supported modes: comparison, loadtest`);
+     }
     
     // Set defaults
     config.concurrency = config.concurrency || 5;

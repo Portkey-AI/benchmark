@@ -1,7 +1,7 @@
 {
     "name": "portkey-benchmark",
     "version": "1.0.0",
-    "description": "Benchmark script to measure Portkey latency overhead",
+    "description": "Multi-mode benchmark tool for API performance testing (comparison, Portkey load test)",
     "main": "benchmark.js",
     "type": "module",
     "scripts": {

@@ -1,13 +1,18 @@
-# Portkey Latency Benchmark
+# Portkey Benchmark Tool
 
-A comprehensive benchmarking tool to measure and compare latency between direct OpenAI API calls and Portkey proxy calls. This tool helps you understand the performance overhead introduced by using Portkey as a proxy layer.
+A comprehensive benchmarking tool for API performance testing with two modes:
+- **Comparison Mode**: Compare latency between direct OpenAI API calls and Portkey proxy calls
+- **Load Test Mode**: Dedicated load testing for Portkey endpoints
+
+This tool helps you understand Portkey performance characteristics and optimize your API usage patterns.
 
 ## 🎯 Purpose
 
 This benchmark tool:
-- Compares response times between OpenAI direct API and Portkey proxy
-- Measures network latency overhead introduced by Portkey
-- Tests performance under concurrent load
+- Compares response times between OpenAI direct API and Portkey proxy (comparison mode)
+- Performs dedicated load testing for Portkey endpoints (load test mode)
+- Measures network latency overhead and processing times
+- Tests performance under concurrent load with configurable parameters
 - Provides detailed statistical analysis and reports
 - Identifies OpenAI processing time vs. network latency breakdown
 
@@ -52,9 +57,14 @@ This benchmark tool:
 
 The `config.json` file contains all benchmarking parameters:
 
-### Required Settings
-- `openaiApiKey`: Your OpenAI API key
-- `portkeyApiKey`: Your Portkey API key
+### Mode Configuration
+- `mode`: Test mode to run (default: "comparison")
+  - `"comparison"`: Compare OpenAI vs Portkey latency (requires both API keys)
+  - `"loadtest"`: Load test Portkey only (requires Portkey API key)
+
+### Required Settings (Mode-Dependent)
+- `openaiApiKey`: Your OpenAI API key (required for comparison mode)
+- `portkeyApiKey`: Your Portkey API key (required for both modes)
 
 ### API Configuration
 - `portkeyBaseURL`: Portkey API endpoint (default: "https://api.portkey.ai/v1")
@@ -81,21 +91,29 @@ The `prompt` can be either:
   ]
   ```
 
-### Example Configuration
+### Mode Configuration Examples
+
+Your existing `config.json` already has all the necessary fields. Just change the `mode` field to switch between test types:
+
+#### For Portkey Load Testing
 ```json
 {
-  "portkeyBaseURL": "https://api.portkey.ai/v1",
-  "portkeyApiKey": "pk-your-key-here",
-  "openaiApiKey": "sk-your-key-here",
-  "model": "gpt-3.5-turbo",
-  "prompt": "Explain quantum computing in simple terms.",
-  "concurrency": 30,
-  "maxRequests": 500,
-  "testDuration": 60,
-  "maxTokens": 100,
-  "temperature": 0.7
+  "mode": "loadtest",
+  // ... rest of your existing config
+  // Only portkeyApiKey is required for this mode
 }
 ```
+
+#### For Comparison Testing (Default)
+```json
+{
+  "mode": "comparison",
+  // ... rest of your existing config
+  // Both portkeyApiKey and openaiApiKey are required
+}
+```
+
+> **💡 Tip**: You can also omit the `mode` field entirely to default to comparison mode.
 
 ## 🏃‍♂️ Usage
 
@@ -103,6 +121,20 @@ The `prompt` can be either:
 ```bash
 node benchmark.js
 ```
+
+### Switching Between Modes
+
+Simply edit your `config.json` file and change the `mode` field:
+
+#### Run Portkey Load Test
+1. Edit `config.json` and set `"mode": "loadtest"`
+2. Ensure `portkeyApiKey` is configured
+3. Run: `node benchmark.js`
+
+#### Run Comparison Test
+1. Edit `config.json` and set `"mode": "comparison"` (or omit mode for default)
+2. Ensure both `portkeyApiKey` and `openaiApiKey` are configured
+3. Run: `node benchmark.js`
 
 ### Custom Configuration File
 ```bash
@@ -193,7 +225,7 @@ For detailed header information and debugging:
 ```
 benchmark/
 ├── benchmark.js          # Main benchmark script
-├── config.json          # Configuration file
+├── config.json          # Configuration file (supports all modes)
 ├── package.json         # Node.js dependencies
 ├── package-lock.json    # Dependency lock file
 ├── results/             # Generated benchmark reports
